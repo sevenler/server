@@ -1,0 +1,11 @@
+*.DS_Store
+*.pyc
+*.swp
+*.swo
+*.swn
+*.sw*
+*.pyc
+tmp/
+log/
+*.log
+env*
