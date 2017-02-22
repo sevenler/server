@@ -22,6 +22,9 @@ EVENT_NAMES = {
     POLL_NVAL: 'POLL_NVAL',
 }
 
+EOL1 = b'\n\n'
+EOL2 = b'\n\r\n'
+
 class EventLoop(object):
     def __init__(self):
         self._event_handler = {}
@@ -30,17 +33,20 @@ class EventLoop(object):
 
     def run(self):
         while not self._stoping:
-            fd, event = self._poll()
-            socket, handle_method = self._event_handler[fd]
-            handle_method(socket, fd, event)
+            for fd, event in self._poll():
+                h = self._event_handler[fd]
+                socket = h[0]
+                handle_method = h[1]
+                handle_method(socket, fd, event)
 
     def _poll(self):
         events = self._impl.poll()
-        return [fd, event in events]
+        return events
 
     def add_handler(self, socket, handle_method):
         fd = socket.fileno()
         self._event_handler[fd] = (socket, handle_method)
+        self._impl.register(socket)
 
     def stop(self):
         self._stoping = True
@@ -55,10 +61,21 @@ class TCPServer(object):
         ss.bind((self._address, self._port))
         ss.listen(5)
         ss.setblocking(0)
+
+        self._address = ss.getsockname()[0]
+        self._port = ss.getsockname()[1]
         self._server_socket = ss
 
         self._event_loop = None
         self._fd_handlers = {}
+
+    @property
+    def address(self):
+        return self._address
+
+    @property
+    def port(self):
+        return self._port
 
     def add_to_loop(self, loop):
         self._event_loop = loop
@@ -69,39 +86,56 @@ class TCPServer(object):
         eh = EventHandler()
         self._fd_handlers[cfd] = eh
         eh.handle_connection(connection, address)
-        self._event_lopp.add_handler(connection, self.handle_event)
+        self._event_loop.add_handler(connection, self.handle_event)
 
     def handle_event(self, sock, fd, event):
-        if sock is self._sever_socket:
-            conn, address = fd.accept()
+        if sock is self._server_socket:
+            conn, address = sock.accept()
             conn.setblocking(0)
-            self._server_socket.register(conn)
             self._handle_connect(conn, address)
         else:
             handler = self._fd_handlers[fd]
-            handler.handle(fd, event)
+            handler.handle(sock, fd, event)
 
 class EventHandler(object):
-    def handle_connection(self, connection, client_address):
-        print 'get connection from %s'%client_address
-        pass
+    def __init__(self):
+        self._request = {}
+        self._response = {}
 
-    def handle(self, fd, event):
+    def handle_connection(self, connection, client):
+        print 'get connection from %s'%client[0]
+
+    def handle(self, sock, fd, event):
         if event & POLL_IN:
-            self.handle_read(fd, event)
+            self.handle_read(sock, fd, event)
         elif event & POLL_OUT:
-            self.handle_write(fd, event)
+            self.handle_write(sock, fd, event)
         elif event & (POLL_HUP | POLL_ERR):
-            self.handle_error(fd, event)
+            self.handle_error(sock, fd, event)
         else:
             raise Exception('error event type')
 
-    def handle_read(self, socket, event):
-        data = fd.revc(1024)
-        print 'receive data %s'%data
+    def handle_read(self, sock, fd, event):
+        self._request[fd] += sock.recv(1024)
+        if EOL1 in self._request[fd] or EOL2 in self._request[fd]:
+            epoll.modify(fd, EPOLLOUT)
+            connections[fileno].setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 1)
+        #print 'receive data %s'%data
 
-    def handle_write(self, socket, event):
+    def handle_write(self, sock, fd, event):
         pass
 
-    def handle_error(self, socket, event):
+    def handle_error(self, sock, fd, event):
         pass
+
+
+if __name__ == '__main__':
+    loop = EventLoop()
+
+    config = {
+        'address':'localhost',
+        'port': 8899
+    }
+    server = TCPServer(config)
+    server.add_to_loop(loop)
+    loop.run()
